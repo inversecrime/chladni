@@ -143,8 +143,6 @@ class Simulation:
         self.frequencies = frequencies
         self.patterns = patterns
 
-        print(frequencies)
-
     def _set_frequency(self, frequency: int) -> None:
         assert 0 <= frequency and frequency <= 100
         assert self.frequencies is not None
