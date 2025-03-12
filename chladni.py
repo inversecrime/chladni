@@ -4,7 +4,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as sp_linalg
 from numpy import ndarray
-from scipy.sparse import csr_matrix
+from scipy.sparse import csc_matrix
 
 
 def process_stencil(stencil: ndarray, center: tuple[float, ...], grid_shape: tuple[int, ...]) -> tuple[ndarray, ndarray]:
@@ -24,30 +24,30 @@ def process_stencil(stencil: ndarray, center: tuple[float, ...], grid_shape: tup
     return (stencil_offsets, stencil_values)
 
 
-def sparse(i: ndarray, j: ndarray, v: ndarray, m: int, n: int) -> csr_matrix:
+def sparse(i: ndarray, j: ndarray, v: ndarray, m: int, n: int) -> csc_matrix:
     i = np.ravel(i)
     j = np.ravel(j)
     v = np.ravel(v)
-    return sp.csr_matrix((v, (i, j)), shape=(m, n))
+    return sp.csc_matrix((v, (i, j)), shape=(m, n))
 
 
 # Reference: [Chladni Figures and the Tacoma Bridge: Motivating PDE Eigenvalue Problems via Vibrating Plates] by [Martin J. Gander and Felix Kwok]
-def biharmonicOperator(n: int, mu: float) -> tuple[csr_matrix, csr_matrix]:
+def biharmonic_operator(n: int, mu: float) -> tuple[csc_matrix, csc_matrix]:
     # The size of matrices including ghost points is denoted by m.
     m = n + 2
 
     # Define the discrete laplacian matrices for 1D and 2D.
-    # Note that these do not include the scaling factor 1/h^2.
-    identity_1D = sp.eye(m, format="csr")
-    assert isinstance(identity_1D, csr_matrix)
+    # These are not scaled by 1/h^2.
+    identity_1D = sp.eye(m, format="csc")
+    assert isinstance(identity_1D, csc_matrix)
     identity_1D[[0, -1], :] = 0
 
-    laplacian_1D = sp.spdiags(np.asarray([1, -2, 1])[:, np.newaxis] * np.ones(m), [-1, 0, 1], m, m, format="csr")
-    assert isinstance(laplacian_1D, csr_matrix)
+    laplacian_1D = sp.spdiags(np.asarray([1, -2, 1])[:, np.newaxis] * np.ones(m), [-1, 0, 1], m, m, format="csc")
+    assert isinstance(laplacian_1D, csc_matrix)
     laplacian_1D[[0, -1], :] = 0
 
-    laplacian_2D = sp.kron(identity_1D, laplacian_1D) + sp.kron(laplacian_1D, identity_1D)
-    assert isinstance(laplacian_2D, csr_matrix)
+    laplacian_2D = sp.kron(identity_1D, laplacian_1D, format="csc") + sp.kron(laplacian_1D, identity_1D, format="csc")
+    assert isinstance(laplacian_2D, csc_matrix)
 
     fidx_grid = np.reshape(np.arange(m**2), newshape=(m, m))
 
@@ -65,7 +65,7 @@ def biharmonicOperator(n: int, mu: float) -> tuple[csr_matrix, csr_matrix]:
     ghost = np.concatenate([ghost_left, ghost_right, ghost_top, ghost_bottom])
 
     # N is the finite volume discretization of the negative laplacian to be applied to w, given by:
-    # (Nw)_(ij) = integral of [-laplacian w] over V_(ij) = integral of [-dw/dn] over the boundary of V_(ij).
+    # (Nw)_(ij) = integral of -laplacian w over V_(ij) = integral of -dw/dn over the boundary of V_(ij).
     #
     # The input vector w includes ghost points. The output vector Nw does not include ghost points.
     # The ghost points of w correspond to special boundary integrals (3.10 and following / 3.12 and following) and can be eliminated with finite differences.
@@ -75,16 +75,14 @@ def biharmonicOperator(n: int, mu: float) -> tuple[csr_matrix, csr_matrix]:
     # The coefficients of the corner stencils along the edges need to be halved, and the coefficients of the corners themselves need to be quartered (3.12).
     # Therefore, it is enough to adjust all edge stencils. This way, the corner coefficients will be adjusted twice, which is exactly what we want.
     N = -laplacian_2D.copy()
-    assert isinstance(N, csr_matrix)
-
     N[edge_left[:, np.newaxis], edge_left[np.newaxis, :]] /= 2
     N[edge_right[:, np.newaxis], edge_right[np.newaxis, :]] /= 2
     N[edge_top[:, np.newaxis], edge_top[np.newaxis, :]] /= 2
     N[edge_bottom[:, np.newaxis], edge_bottom[np.newaxis, :]] /= 2
-    assert isinstance(N, csr_matrix)
+    assert isinstance(N, csc_matrix)
 
     # Helper function for constructing L.
-    def one_side_of_L(orientation: Literal["horizontal"] | Literal["vertical"], ghost_fidx: ndarray, boundary_fidx: ndarray) -> csr_matrix:
+    def one_side_of_L(orientation: Literal["horizontal"] | Literal["vertical"], ghost_fidx: ndarray, boundary_fidx: ndarray) -> csc_matrix:
         match orientation:
             case "horizontal":
                 stencil = 1 / 2 * np.asarray([[1, 0, -1],
@@ -138,10 +136,10 @@ def biharmonicOperator(n: int, mu: float) -> tuple[csr_matrix, csr_matrix]:
          - one_side_of_L("horizontal", ghost_right, edge_right)
          - one_side_of_L("vertical", ghost_top, edge_top)  # TODO why does it have to be like this exactly?
          + one_side_of_L("vertical", ghost_bottom, edge_bottom))
-    assert isinstance(L, csr_matrix)
+    assert isinstance(L, csc_matrix)
 
     # Helper function for constructing A.
-    def one_side_of_A(orientation: Literal["horizontal"] | Literal["vertical"], ghost_fidx: ndarray, boundary_fidx: ndarray) -> csr_matrix:
+    def one_side_of_A(orientation: Literal["horizontal"] | Literal["vertical"], ghost_fidx: ndarray, boundary_fidx: ndarray) -> csc_matrix:
         match orientation:
             case "horizontal":
                 stencil = np.asarray([[0, -mu, 0],
@@ -173,22 +171,22 @@ def biharmonicOperator(n: int, mu: float) -> tuple[csr_matrix, csr_matrix]:
          + one_side_of_A("horizontal", ghost_right, edge_right)
          + one_side_of_A("vertical", ghost_top, edge_top)
          + one_side_of_A("vertical", ghost_bottom, edge_bottom))
-    assert isinstance(A, csr_matrix)
+    assert isinstance(A, csc_matrix)
 
     # TODO explanation needed
     A = A[domain, :][:, domain] - A[domain, :][:, ghost] @ sp_linalg.inv(A[ghost, :][:, ghost]) @ A[ghost, :][:, domain]
-    assert isinstance(A, csr_matrix)
+    assert isinstance(A, csc_matrix)
 
     # TODO explanation needed
-    B = sp.eye(m**2, format="csr")
-    assert isinstance(B, csr_matrix)
+    B = sp.eye(m**2, format="csc")
+    assert isinstance(B, csc_matrix)
 
     B[edge_left[:, np.newaxis], edge_left[np.newaxis, :]] /= 2
     B[edge_right[:, np.newaxis], edge_right[np.newaxis, :]] /= 2
     B[edge_top[:, np.newaxis], edge_top[np.newaxis, :]] /= 2
     B[edge_bottom[:, np.newaxis], edge_bottom[np.newaxis, :]] /= 2
     B = B[domain, :][:, domain]
-    assert isinstance(B, csr_matrix)
+    assert isinstance(B, csc_matrix)
 
     # TODO explanation needed
     h = 2 / (n - 1)
@@ -199,9 +197,9 @@ def biharmonicOperator(n: int, mu: float) -> tuple[csr_matrix, csr_matrix]:
 
 
 def calculate_patterns(grid_size: int, mu: float, n_patterns: int) -> tuple[ndarray, ndarray]:  # TODO explanation needed
-    (A, B) = biharmonicOperator(grid_size, mu)
+    (A, B) = biharmonic_operator(grid_size, mu)
 
-    (eigenvalues, eigenfunctions) = sp_linalg.eigs(A=A, M=B, which="SM", k=n_patterns + 3)  # type: ignore
+    (eigenvalues, eigenfunctions) = sp_linalg.eigs(A=A, M=B, which="SM", k=n_patterns + 5)  # type: ignore
     assert isinstance(eigenvalues, ndarray)
     assert isinstance(eigenfunctions, ndarray)
 
@@ -217,7 +215,10 @@ def calculate_patterns(grid_size: int, mu: float, n_patterns: int) -> tuple[ndar
     eigenvalues = eigenvalues[permutation]
     eigenfunctions = eigenfunctions[permutation]
 
-    eigenvalues = eigenvalues[3:]
-    eigenfunctions = eigenfunctions[3:]
+    first_valid_index = np.argmax(eigenvalues > 1)
+    assert first_valid_index < 5
+
+    eigenvalues = eigenvalues[first_valid_index:][:n_patterns]
+    eigenfunctions = eigenfunctions[first_valid_index:][:n_patterns]
 
     return (eigenvalues, eigenfunctions)
