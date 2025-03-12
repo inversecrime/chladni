@@ -62,7 +62,7 @@ class Simulation:
 
     @cached_property
     def grid_points_2D(self) -> ndarray:
-        return np.reshape(np.stack(np.broadcast_arrays(self.grid_points_1D[np.newaxis, :], self.grid_points_1D[:, np.newaxis]), axis=-1), newshape=(self.grid_size**2, 2))
+        return np.reshape(np.stack(np.broadcast_arrays(self.grid_points_1D[np.newaxis, :], self.grid_points_1D[:, np.newaxis]), axis=-1), shape=(self.grid_size**2, 2))
 
     def __init__(self) -> None:
         self.frequencies = None
@@ -116,7 +116,7 @@ class Simulation:
         return speeds
 
     def _points_to_speeds(self, pattern: ndarray, points: ndarray) -> ndarray:  # general
-        return RegularGridInterpolator((self.grid_points_1D, self.grid_points_1D), np.reshape(self._scale_to_speeds(pattern), newshape=(self.grid_size, self.grid_size)))(points)
+        return RegularGridInterpolator((self.grid_points_1D, self.grid_points_1D), np.reshape(self._scale_to_speeds(pattern), shape=(self.grid_size, self.grid_size)))(points)
 
     def _get_n_particles(self) -> int:
         return self.particle_ages.size

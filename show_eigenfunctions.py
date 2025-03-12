@@ -15,7 +15,7 @@ n_patterns = 25
 for index in range(n_patterns):
     plt.subplot(round(sqrt(n_patterns)) + 1, round(sqrt(n_patterns)) + 1, index + 1)
     plt.title(f"Eigenfrequenz = {ratio * sqrt(eigenvalues[index]):.2f}")
-    plt.contour(np.reshape(eigenfunctions[index], newshape=(grid_size, grid_size)), (-1e-10, +1e-10))
-    # plt.imshow(np.reshape(eigenfunctions[index], newshape=(grid_size, grid_size)))
+    plt.contour(np.reshape(eigenfunctions[index], shape=(grid_size, grid_size)), (-1e-10, +1e-10))
+    # plt.imshow(np.reshape(eigenfunctions[index], shape=(grid_size, grid_size)))
 
 plt.show()

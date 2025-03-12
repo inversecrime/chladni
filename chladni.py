@@ -49,7 +49,7 @@ def biharmonic_operator(n: int, mu: float) -> tuple[csc_matrix, csc_matrix]:
     laplacian_2D = sp.kron(identity_1D, laplacian_1D, format="csc") + sp.kron(laplacian_1D, identity_1D, format="csc")
     assert isinstance(laplacian_2D, csc_matrix)
 
-    fidx_grid = np.reshape(np.arange(m**2), newshape=(m, m))
+    fidx_grid = np.reshape(np.arange(m**2), shape=(m, m))
 
     edge_left = fidx_grid[1:- 1, 1]
     edge_right = fidx_grid[1:- 1, - 2]
