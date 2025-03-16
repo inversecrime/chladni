@@ -95,7 +95,7 @@ class ControlWindow(QWidget):
         mu_box.valueChanged.connect(lambda value: set_mu(value))
 
         def set_frequency(frequency: float) -> None:
-            if frequency == simulation.mu:
+            if frequency == simulation.frequency:
                 return
             frequency = simulation.set_frequency(frequency)
             frequency_box.setValue(frequency)
