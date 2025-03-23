@@ -57,6 +57,8 @@ class ControlWindow(QWidget):
     def __init__(self, simulation: Simulation) -> None:
         super().__init__()
 
+        self.setWindowTitle(" ")
+
         mu_label = QLabel("Mu:")
 
         mu_box = QDoubleSpinBox()
@@ -122,8 +124,6 @@ class ControlWindow(QWidget):
         layout.addWidget(throw_particles_button)
         layout.addWidget(keep_throwing_particles_button)
         self.setLayout(layout)
-
-        self.setWindowTitle(" ")
 
         mu_box.setValue(0.5)
         frequency_box.setValue(-np.inf)
