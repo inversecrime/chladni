@@ -1,0 +1,452 @@
+check out 
+http://militzer.berkeley.edu/EPS109/final_projects_2020/04/chladni.py
+which uses a "gradient" algorithm to determine particle movement from a vibration function (which could be our computed eigenvalue functions!)
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.special import jv, jn_zeros
+
+import random
+import abc
+import copy
+
+# -- SIMULATION PARAMETERS -- #
+
+SHAPE_SQUARE = 'square'
+SHAPE_CIRCLE = 'circle'
+
+class SimulationParams:
+	def __init__(self,
+		minNodeVibrationThreshold=1e-2,
+		vibrationIntensity=3,
+		aggressiveVibrationIntensity=4.5,
+		maxGradientIntensity=0.4,
+		minNoisePercentWhenResonant=1,
+		minNoisePercentWhenNonResonant=0.5,
+		replaceSand=False
+	):
+		self.minNodeVibrationThreshold = minNodeVibrationThreshold
+		self.vibrationIntensity = vibrationIntensity
+		self.aggressiveVibrationIntensity = aggressiveVibrationIntensity
+		self.maxGradientIntensity = maxGradientIntensity
+		self.minNoisePercentWhenResonant = minNoisePercentWhenResonant
+		self.minNoisePercentWhenNonResonant = minNoisePercentWhenNonResonant
+		self.replaceSand = replaceSand
+
+def chladni_eqn_square(x, y, m, n, L, asym=0):
+	# From Paul Bourke's article: cos(n pi x / L) cos(m pi y / L) - cos(m pi x / L) cos(n pi y / L) = 0
+	NX = n * x / L + asym
+	NY = n * y / L + asym
+	MX = m * x / L + asym
+	MY = m * y / L + asym
+	result = np.cos(NX) * np.cos(MY) - np.cos(MX) * np.cos(NY)
+	return result
+
+# Unsure of what C1 and C2 are. Circumferences? Bourke doesn't explain what they should be. I might assume 1.
+def chladni_eqn_circle(r, theta, m, n, R, C1, C2, asym=0):
+	# From Paul Bourke's article: Jn(K r) (C1 cos(n theta) + C2 sin(n theta))
+	Z_nm = jn_zeros(n, m)[m-1]
+	K = Z_nm / R
+	Jn = jv(n, K * r)
+	result = Jn * (C1 * np.cos(n * theta + asym) + C2 * np.sin(n * theta + asym))
+	return result
+
+class ChladniParams(metaclass=abc.ABCMeta):
+	def __init__(self, shape, m, n):
+		self.shape = shape
+		self.m = m
+		self.n = n
+
+	def copyWithModes(self, m, n):
+		p = copy.copy(self)
+		p.m = m
+		p.n = n
+		return p
+		
+	@abc.abstractmethod
+	def computeVibrationValue(self, x, y, asym=0):
+		pass
+
+	@abc.abstractmethod
+	def toString(self):
+		pass
+		
+class SquareChladniParams(ChladniParams):
+	def __init__(self, m, n, L):
+		ChladniParams.__init__(self, SHAPE_SQUARE, m, n)
+		self.L = L
+		
+	def computeVibrationValue(self, x, y, asym=0):
+		return chladni_eqn_square(x, y, self.m, self.n, self.L, asym)
+	
+	def toString(self):
+		return f"{self.shape}_{self.m}_{self.n}_{self.L}"
+		
+class CircleChladniParams(ChladniParams):
+	def __init__(self, m, n, R, C1, C2):
+		ChladniParams.__init__(self, SHAPE_CIRCLE, m, n)
+		self.R = R
+		self.C1 = C1
+		self.C2 = C2
+		
+	def computeVibrationValue(self, x, y, asym=0):
+		# Convert to polar coordinates
+		r = np.sqrt(x*x + y*y)
+		theta = (np.pi / 2) if x == 0 else np.arctan(y/x)
+		return chladni_eqn_circle(r, theta, self.m, self.n, self.R, self.C1, self.C2, asym)
+
+	def toString(self):
+		return f"{self.shape}_{self.m}_{self.n}_{self.R}_{self.C1}_{self.C2}"
+
+	
+# -- NUMERICAL SIMULATION -- #
+	
+# Almost identical to Paiva's method by the same name. Determines the vibration
+# at each point on the plate for use in calculating the gradient of each particle.
+# p: A ChladniParams object determining the model and frequency (in terms of
+#    diametric/linear (m) and radial/circular (n) nodes) to use.
+# width: The width or diameter of the plate (or display window), given in pixels.
+# useAsym: If True, adds some noise to the system that will make it asymmetric.
+def computeVibrationValues(p, width, useAsym=False):
+	# Introduces asymmetric noise if used
+	asym = 0 if not useAsym else random.uniform(0, 2 * np.pi)
+	# Add random translation to spread particles, again as Paiva does
+	# Note that width = height, so only one variable is necessary
+	TX = random.uniform(0, width)
+	TY = random.uniform(0, width)
+	
+	vibrationValues = np.zeros((width, width))
+	for y in range(0, width):
+		for x in range(0, width):
+			value = p.computeVibrationValue(x + TX, y + TY, asym)
+			value /= 2 # Normalize from [-2,2] to [-1,1] as Paiva does
+			value = abs(value) # Flip troughs to become crest as Paiva again does
+			vibrationValues[y,x] = value
+	
+	return vibrationValues
+
+# Determine direction of motion for all particles to approach nodes.
+def computeGradients(vibrationValues, width, simulationParams=SimulationParams()):
+	gradients = np.zeros((width, width, 2))
+	for y in range(1,width-1):
+		for x in range(1,width-1):
+			vibration = vibrationValues[y,x]
+			# If vibration is low enough, consider point to be a node, so gradient is 0
+			if vibration <= simulationParams.minNodeVibrationThreshold:
+				gradients[y,x,0] = 0
+				gradients[y,x,1] = 0
+				continue
+			# Otherwise, search around neighbors for the one with the lowest vibration (closest to a node)
+			candidateGradients = [(0,0)]
+			minVibration = np.inf
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					if dx == 0 and dy == 0:
+						continue # Avoid self-comparison
+					nVibration = vibrationValues[y + dy, x + dx]
+					# Update minimum values and possible gradients
+					if nVibration < minVibration:
+						candidateGradients = [(dx, dy)]
+						minVibration = nVibration
+					elif nVibration == minVibration:
+						# Account for neighbors to avoid biasing motion toward any one direction
+						candidateGradients.append((dx, dy))        
+			# If more than one gradient, randomly choose one (as Paiva explains, to avoid biasing the direction)
+			gradient = random.choice(candidateGradients)
+			gradients[y,x,:] = gradient
+	return gradients
+
+# Simulates a Chladni plate. Continues running with the passed in Chladni params until
+# told to change them to some other value. For use with music, 
+class ChladniSimulation:
+	def __init__(self, numParticles, width, simulationParams=SimulationParams(), grainAlpha=1):
+		self.width = width
+		self.numParticles = numParticles
+		self.grainAlpha = grainAlpha
+		self.simulationParams = simulationParams
+		self.useFigure = False
+		
+		self.clearBuffer()
+		self.randomizeParticles()
+		
+		self.chladniParams = None
+		self.isResonant = False
+		self.savedGradients = dict()
+		self.genGradients()
+	
+	def randomizeParticles(self):
+		self.particles = []
+		for i in range(self.numParticles):
+			x = random.uniform(0, self.width)
+			y = random.uniform(0, self.width)
+			self.particles.append((x,y))
+			self.drawParticle(x,y)
+			
+	def getIntPos(self, x, y):
+		iX = int(min(round(x), self.width - 1))
+		iY = int(min(round(y), self.width - 1))
+		return (iX, iY)
+			
+	def clearBuffer(self):
+		self.buffer = np.zeros((self.width, self.width))
+		
+	def drawParticle(self, x, y):
+		iX, iY = self.getIntPos(x, y)
+		currValue = self.buffer[iY,iX]
+		self.buffer[iY,iX] = min(currValue + self.grainAlpha, 1)
+		
+	def initFigure(self, figsize=10., pauseTime=1e-4):
+		self.useFigure = True
+		fig = plt.figure(figsize=(figsize,figsize))
+		ax = fig.gca()
+		self.h = ax.imshow(self.buffer, cmap='gray')
+		self.pauseTime = pauseTime
+		
+	def renderBuffer(self):
+		if self.useFigure:
+			self.h.set_data(self.buffer)
+			plt.draw(), plt.pause(self.pauseTime)
+			return
+		plt.rcParams['figure.figsize'] = (10,10)
+		plt.imshow(self.buffer, cmap='gray')
+		plt.show()
+
+	def memoizeGradients(self, p, gradients):
+		key = p.toString()
+		self.savedGradients[key] = gradients
+
+	def getMemoized(self, p):
+		key = p.toString()
+		if key not in self.savedGradients:
+			return None
+		return self.savedGradients[key]
+			
+	def genGradients(self):
+		# If not resonant, there are no gradients, only random motion
+		if not self.isResonant:
+			self.gradients = np.zeros((self.width, self.width, 2))
+			return
+		# For now, does not use asymmetry
+		gradients = self.getMemoized(self.chladniParams)
+		if gradients is None:
+			vibrationValues = computeVibrationValues(self.chladniParams, self.width)
+			gradients = computeGradients(vibrationValues, self.width, self.simulationParams)
+			self.memoizeGradients(self.chladniParams, gradients)
+		self.gradients = gradients
+		
+	def genVibrationIntensity(self):
+		if self.isResonant:
+			return self.simulationParams.vibrationIntensity
+		return self.simulationParams.aggressiveVibrationIntensity
+			
+	def step(self, chladniParams=None, isResonant=None):
+		"""
+		Runs one step of the simulation. If no parameters are passed in,
+		continues with the same simulation. Otherwise, either uses new n
+		and m values (etc.), or starts vibrating randomly (isResonant=False).
+		
+		chladniParams: The Chladni parameters to use for this step and all
+		  steps going forward if no other input is provided.
+		  
+		isResonant: Determines whether the plate is at a resonant frequency.
+		  If true, chladniParams should be passed in. If false, then the plate
+		  will vibrate particles randomly.
+		"""
+		# Update params, and calculate gradients if appropriate
+		if isResonant and not chladniParams:
+			print('Failed to update. Invalid set of parameters: if is resonant, must have Chladni parameters.')
+			return False
+		
+		doesNotHaveUpdate = chladniParams is None and isResonant is None
+		if not doesNotHaveUpdate:
+			needsUpdate = False
+			if isResonant != self.isResonant:
+				self.isResonant = isResonant
+				needsUpdate = True
+			if chladniParams != self.chladniParams:
+				self.chladniParams = chladniParams
+				needsUpdate = True
+			if needsUpdate:
+				self.genGradients()
+		
+		self.clearBuffer()
+		newParticles = []
+		for i in range(len(self.particles)):
+			x, y = self.particles[i]
+			iX, iY = self.getIntPos(x, y)
+			gradX, gradY = self.gradients[iY,iX]
+			# Use gradient descent to determine next particle position
+			x += self.simulationParams.maxGradientIntensity * gradX
+			y += self.simulationParams.maxGradientIntensity * gradY
+			# Add random vibration, with sinusoidal amplitude
+			intensity = self.genVibrationIntensity()
+			halfIntensity = intensity / 2
+			x += random.uniform(-halfIntensity, halfIntensity)
+			y += random.uniform(-halfIntensity, halfIntensity)
+			self.drawParticle(x, y)
+			newParticles.append((x, y))
+		self.particles = newParticles
+		
+		return True
+
+class MultiFreqChladniSimulation:
+	def __init__(self,
+		numParticles,
+		width,
+		baseChladniParams,
+		maxAmp,
+		simulationParams=SimulationParams(),
+		grainColor=lambda x, y: (255,255,255)
+	):
+		self.width = width
+		self.numParticles = numParticles
+		self.maxAmp = maxAmp
+		self.grainColor = grainColor
+		self.baseChladniParams = baseChladniParams
+		self.sp = simulationParams
+		self.useFigure = False
+		
+		self.clearBuffer()
+		self.randomizeParticles()
+		
+		self.activeModes = []
+		self.gradients = dict()
+		self.genGradients(None, None)
+	
+	def randomizeParticles(self):
+		self.particles = []
+		for i in range(self.numParticles):
+			x = random.uniform(0, self.width)
+			y = random.uniform(0, self.width)
+			self.particles.append((x,y))
+			self.drawParticle(x,y,i)
+			
+	def getIntPos(self, x, y):
+		iX = int(min(round(x), self.width - 1))
+		iY = int(min(round(y), self.width - 1))
+		return (iX, iY)
+			
+	def clearBuffer(self):
+		self.buffer = np.zeros((self.width, self.width, 3), dtype=np.uint8)
+		
+	def drawParticle(self, x, y, i):
+		iX, iY = self.getIntPos(x, y)
+		currValue = self.buffer[iY,iX]
+		self.buffer[iY,iX,:] = self.grainColor(x, y, i)
+		
+	def initFigure(self, figsize=10., pauseTime=1e-4):
+		self.useFigure = True
+		fig = plt.figure(figsize=(figsize,figsize))
+		ax = fig.gca()
+		self.h = ax.imshow(self.buffer, cmap='gray')
+		self.pauseTime = pauseTime
+		
+	def renderBuffer(self):
+		if self.useFigure:
+			self.h.set_data(self.buffer)
+			plt.draw(), plt.pause(self.pauseTime)
+			return
+		plt.rcParams['figure.figsize'] = (10,10)
+		plt.imshow(self.buffer, cmap='gray')
+		plt.show()
+
+	def modeKey(self, m, n):
+		return f"{m}_{n}"
+
+	def setGradients(self, m, n, gradients):
+		self.gradients[self.modeKey(m,n)] = gradients
+
+	def getGradients(self, m, n):
+		key = self.modeKey(m,n)
+		if key not in self.gradients:
+			return None
+		return self.gradients[key]
+
+	def genGradients(self, m, n):
+		gradients = self.getGradients(m, n)
+		if gradients is None:
+			if m is None and n is None:
+				self.setGradients(None, None, np.zeros((self.width, self.width, 2)))
+				return
+			vibrationValues = computeVibrationValues(self.baseChladniParams.copyWithModes(m,n), self.width)
+			gradients = computeGradients(vibrationValues, self.width, self.sp)
+			self.setGradients(m, n, gradients)
+
+	def genAllGradients(self):
+		if len(self.activeModes) == 0:
+			self.genGradients(None, None)
+		for m, n, amp in self.activeModes:
+			self.genGradients(m, n)
+		
+	def genVibrationIntensity(self, isResonant):
+		if isResonant:
+			return self.sp.vibrationIntensity
+		return self.sp.aggressiveVibrationIntensity
+			
+	def step(self, nonResonantAmp, modePairs):
+		"""
+		Runs one step of the simulation. If no parameters are passed in,
+		continues with the same simulation. Otherwise, either uses new n
+		and m values (etc.), or starts vibrating randomly (no pairs).
+		
+		modePairs: A set of (m,n,amp) tuples listing the modes present in the
+		  plate. If no pairs are passed in, it's assumed that the frequencies
+		  are not resonant.
+
+		nonResonantAmp: The amplitude of any non-resonant frequencies. For
+		  example, if no modePairs are passed in, and nonResonantAmp = 0,
+		  then there will be no vibration.
+		"""
+		# hasUpdate = False in [(m,n) in self.activeModes for m, n, amp in modePairs]
+		self.activeModes = modePairs # [(m,n) for m, n, amp in modePairs]
+
+		modes = self.genAllGradients()
+		self.clearBuffer()
+		newParticles = []
+
+		for i in range(len(self.particles)):
+			x, y = self.particles[i]
+			iX, iY = self.getIntPos(x, y)
+
+			# Check if out of bounds (fallen sand), and if so, place back into bounds
+			if self.sp.replaceSand:
+				if x < 0 or x >= self.width:
+					x = random.uniform(0, self.width)
+				if y < 0 or y >= self.width:
+					y = random.uniform(0, self.width)
+
+			totalGradX = 0
+			totalGradY = 0
+			for m, n, amp in self.activeModes:
+				gradX, gradY = self.getGradients(m,n)[iY,iX]
+				# Sum all amplitude amplitudes
+				totalGradX += amp * gradX
+				totalGradY += amp * gradY
+			# Normalize and threshold total gradient
+			totalGradX = min(abs(totalGradX / self.maxAmp), 1) * np.sign(totalGradX)
+			totalGradY = min(abs(totalGradY / self.maxAmp), 1) * np.sign(totalGradY)
+			# Use gradient descent to determine next particle position
+			x += self.sp.maxGradientIntensity * totalGradX
+			y += self.sp.maxGradientIntensity * totalGradY
+			
+			# Add random vibration, with sinusoidal amplitude
+			isResonant = len(self.activeModes) > 0
+			# If resonant then apply minNoisePercentWhenResonant; otherwise, multiply by normalized amplitude
+			intensity = self.genVibrationIntensity(isResonant)
+			intensityMultiplier = min(max(nonResonantAmp / self.maxAmp, self.sp.minNoisePercentWhenNonResonant), 1)
+			if isResonant and intensityMultiplier < self.sp.minNoisePercentWhenResonant:
+				intensityMultiplier = self.sp.minNoisePercentWhenResonant
+			# Otherwise, multiply by normalized amplitude
+			intensity *= intensityMultiplier
+			# Finally add the vibration
+			halfIntensity = intensity / 2
+			x += random.uniform(-halfIntensity, halfIntensity)
+			y += random.uniform(-halfIntensity, halfIntensity)
+
+			# Render and save particle
+			self.drawParticle(x, y, i)
+			newParticles.append((x, y))
+
+		self.particles = newParticles
+		return True
