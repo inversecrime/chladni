@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chladni Plate</title>
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --text: #1d1d22; --muted: #6a6a75; --line: #d8d8e0;
+    --accent: #2563eb; --accent-text: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14141a; --panel: #1e1e26; --text: #ececf2; --muted: #9a9aa8; --line: #34343f; --accent: #5b8def; --accent-text: #0b0b10; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font: 15px/1.4 system-ui, sans-serif;
+    display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; align-items: flex-start; justify-content: center;
+  }
+  #stage { position: relative; width: min(92vw, calc(100vh - 32px), 700px); aspect-ratio: 1; }
+  canvas { width: 100%; height: 100%; display: block; background: #000; border-radius: 6px; image-rendering: pixelated; }
+  #busy {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, .55); color: #fff; font-size: 18px; border-radius: 6px;
+  }
+  #busy.on { display: flex; }
+  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; width: 300px; max-width: 100%; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  label { display: block; color: var(--muted); font-size: 13px; margin: 14px 0 4px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  input[type=number] {
+    width: 96px; padding: 6px 8px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; font: inherit;
+  }
+  input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  button {
+    padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg);
+    color: var(--text); font: inherit; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button[aria-pressed=true] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  #info { margin-top: 16px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #hint { margin-top: 10px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="canvas" width="700" height="700"></canvas>
+  <div id="busy">Computing plate modes…</div>
+</div>
+<aside>
+  <h1>Chladni plate</h1>
+  <label for="mu">Mu (μ)</label>
+  <div class="row">
+    <input id="mu" type="number" min="0.01" max="0.99" step="0.01" value="0.5">
+    <input id="muSlider" type="range" min="0.01" max="0.99" step="0.01" value="0.5">
+  </div>
+  <label for="frequency">Frequency</label>
+  <div class="row"><input id="frequency" type="number" step="0.01" disabled></div>
+  <div class="row" style="margin-top:6px"><input id="frequencySlider" type="range" step="0.01" disabled></div>
+  <label for="particles">Particles per throw</label>
+  <div class="row"><input id="particles" type="number" min="0" max="10000" step="10" value="100"></div>
+  <div class="buttons">
+    <button id="throw" class="primary">Throw particles</button>
+    <button id="keep" aria-pressed="false">Keep throwing</button>
+    <button id="clear">Clear</button>
+  </div>
+  <div id="info">starting…</div>
+  <div id="hint">Sweep the frequency: when it matches a resonance of the plate, the sand collects on the nodal lines.</div>
+</aside>
+
+<script src="solver.js"></script>
+<script src="simulation.js"></script>
+<script>
+"use strict";
+(function () {
+  const { Simulation } = ChladniSimulation;
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("canvas");
+  const ctx = canvas.getContext("2d");
+  const image = ctx.createImageData(canvas.width, canvas.height);
+  const sim = new Simulation();
+  window.sim = sim; // for experiments in the console
+
+  const muBox = $("mu"), muSlider = $("muSlider");
+  const freqBox = $("frequency"), freqSlider = $("frequencySlider");
+  const particlesBox = $("particles");
+  let computing = false;
+  let fps = 0;
+
+  function setFrequency(value) {
+    const f = sim.setFrequency(value);
+    if (Number.isFinite(f)) {
+      freqBox.value = f.toFixed(2);
+      freqSlider.value = f;
+    }
+  }
+
+  // The eigenproblem blocks the page for about a second; let the "Computing" overlay paint first.
+  function setMu(value) {
+    if (!Number.isFinite(value) || computing) return;
+    computing = true;
+    $("busy").classList.add("on");
+    setTimeout(() => {
+      const t0 = performance.now();
+      const mu = sim.setMu(value);
+      const ms = Math.round(performance.now() - t0);
+      muBox.value = mu;
+      muSlider.value = mu;
+      const lo = sim.minFrequency, hi = sim.maxFrequency;
+      for (const el of [freqBox, freqSlider]) {
+        el.min = lo; el.max = hi; el.disabled = false;
+      }
+      setFrequency(sim.frequency === null ? lo : sim.frequency);
+      $("busy").classList.remove("on");
+      $("info").dataset.solveMs = ms;
+      computing = false;
+    }, 30);
+  }
+
+  muBox.addEventListener("change", () => setMu(parseFloat(muBox.value)));
+  muSlider.addEventListener("change", () => setMu(parseFloat(muSlider.value)));
+  muSlider.addEventListener("input", () => (muBox.value = muSlider.value));
+  freqBox.addEventListener("input", () => setFrequency(parseFloat(freqBox.value)));
+  freqSlider.addEventListener("input", () => setFrequency(parseFloat(freqSlider.value)));
+
+  const particleCount = () => Math.max(0, Math.min(10000, Math.round(parseFloat(particlesBox.value) || 0)));
+  $("throw").addEventListener("click", () => sim.throwParticles(particleCount()));
+  $("clear").addEventListener("click", () => sim.clearParticles());
+  let keepTimer = null;
+  $("keep").addEventListener("click", () => {
+    const on = $("keep").getAttribute("aria-pressed") !== "true";
+    $("keep").setAttribute("aria-pressed", String(on));
+    if (on) keepTimer = setInterval(() => sim.throwParticles(particleCount()), 500);
+    else clearInterval(keepTimer);
+  });
+
+  // 200 ms: recompute speeds from the current pattern with fresh random directions.
+  setInterval(() => { if (!computing) sim.updateParticleSpeeds(); }, 200);
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(now - last, 50);
+    last = now;
+    if (!computing) sim.step(dt);
+    sim.draw(image.data, canvas.width, canvas.height);
+    ctx.putImageData(image, 0, 0);
+    if (dt > 0) fps = fps * 0.9 + (1000 / dt) * 0.1;
+    $("info").textContent = "FPS " + Math.round(fps) + "  ·  particles " + sim.nParticles +
+      (sim.frequency === null ? "" : "  ·  mode solve " + ($("info").dataset.solveMs || "?") + " ms");
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  setMu(0.5);
+})();
+</script>
+</body>
+</html>
