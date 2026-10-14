@@ -113,14 +113,14 @@ test("rigid-body modes come out as the three zero eigenvalues", () => {
   const op = S.biharmonicOperator(20, 0.5);
   const { pairs } = S.lowestEigenpairs(op, 6);
   for (let i = 0; i < 3; i++) assert.ok(Math.abs(pairs[i].value) < 1e-6, `eigenvalue ${i} = ${pairs[i].value}`);
-  assert.ok(pairs[3].value > 1);
+  assert.ok(pairs[3].value > 1e-6);
 });
 
 test("calculatePatterns: frequencies, sorting, normalization, sign convention", () => {
   const { eigenvalues, frequencies, patterns } = S.calculatePatterns(30, 0.5, 8, 30);
   assert.equal(patterns.length, 30);
   for (let i = 0; i < 30; i++) {
-    assert.ok(eigenvalues[i] > 1);
+    assert.ok(eigenvalues[i] > 1e-6);
     if (i > 0) assert.ok(eigenvalues[i] >= eigenvalues[i - 1]);
     assert.ok(Math.abs(frequencies[i] - 8 * Math.sqrt(eigenvalues[i])) < 1e-12);
     const norm = Math.sqrt(patterns[i].reduce((s, x) => s + x * x, 0));

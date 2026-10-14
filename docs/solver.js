@@ -607,7 +607,7 @@
   }
 
   /**
-   * Chladni patterns: the `nPatterns` lowest plate modes with eigenvalue > 1 (rigid-body modes
+   * Chladni patterns: the `nPatterns` lowest plate modes with eigenvalue > 1e-6 (rigid-body modes
    * dropped) on an n x n grid. Mirrors chladni_maths.calculate_patterns.
    * Returns { eigenvalues, frequencies, patterns } with patterns[i] a Float64Array (row-major
    * n x n, 2-norm 1, sign chosen so the entry of largest magnitude is positive).
@@ -615,7 +615,7 @@
   function calculatePatterns(gridSize, mu, frequencyRatio, nPatterns, options) {
     const op = biharmonicOperator(gridSize, mu);
     const { pairs } = lowestEigenpairs(op, nPatterns + 5, options);
-    const valid = pairs.filter((p) => p.value > 1).slice(0, nPatterns);
+    const valid = pairs.filter((p) => p.value > 1e-6).slice(0, nPatterns);
     if (valid.length < nPatterns) throw new Error("eigensolver did not return enough modes");
     const eigenvalues = Float64Array.from(valid.map((p) => p.value));
     const frequencies = eigenvalues.map((v) => frequencyRatio * Math.sqrt(v));

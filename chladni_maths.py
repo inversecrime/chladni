@@ -237,7 +237,10 @@ def biharmonic_operator(n: int, mu: float) -> tuple[sp.csc_matrix, sp.csc_matrix
 def calculate_eigenvalues_and_eigenfunctions(grid_size: int, mu: float, n_patterns: int) -> tuple[np.ndarray, np.ndarray]:
     (A, B) = biharmonic_operator(grid_size, mu)
 
-    (eigenvalues, eigenfunctions) = sp.linalg.eigs(A=A, M=B, which="SM", k=n_patterns + 5)  # type: ignore
+    # A is symmetric and B is diagonal and positive. Shift-invert around sigma = -1 (below the three rigid-body
+    # eigenvalues at 0, which are therefore found too) makes ARPACK converge quickly; the plain
+    # which="SM" without sigma was about 20 times slower and sometimes returned too few valid eigenvalues.
+    (eigenvalues, eigenfunctions) = sp.linalg.eigsh(A=sp.csc_matrix(A), M=sp.csc_matrix(B), sigma=-1, k=n_patterns + 5)  # type: ignore
     eigenfunctions = eigenfunctions.T
 
     assert isinstance(eigenvalues, np.ndarray)
@@ -250,8 +253,11 @@ def calculate_eigenvalues_and_eigenfunctions(grid_size: int, mu: float, n_patter
     eigenvalues = eigenvalues[permutation]
     eigenfunctions = eigenfunctions[permutation]
 
-    first_valid_index = np.argmax(eigenvalues > 1)
-    assert first_valid_index < 5
+    # The free plate has exactly three rigid-body modes (shift and two tilts) with eigenvalue 0 up to round-off (~1e-9).
+    # Drop those and nothing else. (The former threshold "> 1" also dropped real modes: for mu close to 1 the
+    # lowest eigenvalues are 0.17, 0.42, ...)
+    first_valid_index = np.argmax(eigenvalues > 1e-6)
+    assert first_valid_index == 3
 
     eigenvalues = eigenvalues[first_valid_index:][:n_patterns]
     eigenfunctions = eigenfunctions[first_valid_index:][:n_patterns]

@@ -4,7 +4,7 @@ import json, sys, pathlib
 import numpy as np
 
 here = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(here.parents[2]))
+sys.path.insert(0, str(here.parents[1]))
 import chladni_maths as cm
 
 ref = {"operators": [], "modes": []}
